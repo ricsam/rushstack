@@ -204,9 +204,9 @@ export interface ICloudBuildCacheProvider {
     // (undocumented)
     readonly isCacheWriteAllowed: boolean;
     // (undocumented)
-    tryGetCacheEntryBufferByIdAsync(terminal: ITerminal, cacheId: string): Promise<Buffer | undefined>;
+    tryGetCacheEntryBufferByIdAsync(terminal: ITerminal, cacheId: string): Promise<IGetCacheEntryResponse>;
     // (undocumented)
-    trySetCacheEntryBufferAsync(terminal: ITerminal, cacheId: string, entryBuffer: Buffer): Promise<boolean>;
+    trySetCacheEntryBufferAsync(terminal: ITerminal, cacheId: string, entryBuffer: Buffer): Promise<ISetCacheEntryResponse>;
     // (undocumented)
     updateCachedCredentialAsync(terminal: ITerminal, credential: string): Promise<void>;
     // (undocumented)
@@ -252,6 +252,14 @@ export interface IExperimentsJson {
     phasedCommands?: boolean;
     usePnpmFrozenLockfileForRushInstall?: boolean;
     usePnpmPreferFrozenLockfileForRushUpdate?: boolean;
+}
+
+// @beta (undocumented)
+export interface IGetCacheEntryResponse {
+    // (undocumented)
+    buffer: Buffer | undefined;
+    // (undocumented)
+    hasNetworkError: boolean;
 }
 
 // @beta (undocumented)
@@ -333,6 +341,14 @@ export interface IRushSessionOptions {
     getIsDebugMode: () => boolean;
     // (undocumented)
     terminalProvider: ITerminalProvider;
+}
+
+// @beta (undocumented)
+export interface ISetCacheEntryResponse {
+    // (undocumented)
+    hasNetworkError: boolean;
+    // (undocumented)
+    success: boolean;
 }
 
 // @public

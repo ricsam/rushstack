@@ -33,6 +33,28 @@
           "type": "string",
           "description": "Setting this property overrides the cache entry ID. If this property is set, it must contain a [hash] token. It may also contain a [projectName] or a [projectName:normalize] token."
         },
+        "retryCacheRequest": {
+          "type": "object",
+          "description": "When using a cloud storage for the cache retry failed requests",
+          "required": ["retries"],
+          "properties": {
+            "retries": {
+              "type": "integer",
+              "description": "Number of request retries",
+              "default": 1
+            },
+            "waitDuration": {
+              "type": "number",
+              "description": "The duration in seconds to wait between requests (defaults to 2 seconds)",
+              "default": 2
+            },
+            "exponential": {
+              "type": "boolean",
+              "description": "If true will send requets with exponential backoff, e.g. 2, 4, 8, 16 seconds if wait duration is 2 seconds (defaults to false)",
+              "default": false
+            }
+          }
+        },
         "azureBlobStorageConfiguration": {
           "type": "object",
           "additionalProperties": false,
