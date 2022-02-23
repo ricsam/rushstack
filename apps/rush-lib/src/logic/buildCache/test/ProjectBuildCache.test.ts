@@ -1,12 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
 
-import { StringBufferTerminalProvider, Terminal } from '@rushstack/node-core-library';
-import { BuildCacheConfiguration } from '../../../api/BuildCacheConfiguration';
+import {
+  ConsoleTerminalProvider,
+  ITerminal,
+  StringBufferTerminalProvider,
+  Terminal
+} from '@rushstack/node-core-library';
+import { BuildCacheConfiguration, IRetryCacheRequest } from '../../../api/BuildCacheConfiguration';
 import { RushProjectConfiguration } from '../../../api/RushProjectConfiguration';
 import { ProjectChangeAnalyzer } from '../../ProjectChangeAnalyzer';
 import { IGenerateCacheEntryIdOptions } from '../CacheEntryId';
 import { FileSystemBuildCacheProvider } from '../FileSystemBuildCacheProvider';
+import { IGetCacheEntryResponse, ICloudBuildCacheProvider } from '../ICloudBuildCacheProvider';
 
 import { ProjectBuildCache } from '../ProjectBuildCache';
 
@@ -14,6 +20,9 @@ interface ITestOptions {
   enabled: boolean;
   writeAllowed: boolean;
   trackedProjectFiles: string[] | undefined;
+  tryGetCacheEntryBufferByIdAsync: ICloudBuildCacheProvider['tryGetCacheEntryBufferByIdAsync'];
+  localCacheProvider: FileSystemBuildCacheProvider;
+  retryCacheRequest: IRetryCacheRequest;
 }
 
 describe(ProjectBuildCache.name, () => {
@@ -30,10 +39,16 @@ describe(ProjectBuildCache.name, () => {
         buildCacheEnabled: options.hasOwnProperty('enabled') ? options.enabled : true,
         getCacheEntryId: (options: IGenerateCacheEntryIdOptions) =>
           `${options.projectName}/${options.projectStateHash}`,
-        localCacheProvider: undefined as unknown as FileSystemBuildCacheProvider,
+        localCacheProvider: options.hasOwnProperty('localCacheProvider')
+          ? options.localCacheProvider
+          : undefined,
         cloudCacheProvider: {
-          isCacheWriteAllowed: options.hasOwnProperty('writeAllowed') ? options.writeAllowed : false
-        }
+          isCacheWriteAllowed: options.hasOwnProperty('writeAllowed') ? options.writeAllowed : false,
+          tryGetCacheEntryBufferByIdAsync: options.hasOwnProperty('tryGetCacheEntryBufferByIdAsync')
+            ? options.tryGetCacheEntryBufferByIdAsync
+            : undefined
+        },
+        retryCacheRequest: options.hasOwnProperty('retryCacheRequest') ? options.retryCacheRequest : undefined
       } as unknown as BuildCacheConfiguration,
       projectOutputFolderNames: ['dist'],
       projectConfiguration: {
@@ -68,5 +83,49 @@ describe(ProjectBuildCache.name, () => {
         })
       ).toBe(undefined);
     });
+
+    it('should retry request if retryCacheRequest is specified', async () => {
+      const subject = await prepareSubject({
+        localCacheProvider: {
+          tryGetCacheEntryPathByIdAsync: () => {
+            return undefined;
+          }
+        } as unknown as FileSystemBuildCacheProvider,
+        tryGetCacheEntryBufferByIdAsync: async (terminal, cacheId): Promise<IGetCacheEntryResponse> => {
+          return {
+            buffer: undefined,
+            hasNetworkError: true
+          };
+        },
+        retryCacheRequest: {
+          retries: 2,
+          exponential: true,
+          waitDuration: 2
+        }
+      });
+      const terminal: ITerminal = new Terminal(
+        new ConsoleTerminalProvider({
+          verboseEnabled: true,
+          debugEnabled: true
+        })
+      );
+
+      if (!subject) {
+        throw new Error('invalid code');
+      }
+
+      const _st = global.setTimeout;
+      global.setTimeout = ((callback: () => void, time: number) => {
+        return _st(callback, 1);
+      }).bind(global) as typeof global.setTimeout;
+
+      jest.spyOn(global, 'setTimeout');
+
+      const result = await subject.tryRestoreFromCacheAsync(terminal);
+      expect(setTimeout).toHaveBeenCalledTimes(2);
+      expect(setTimeout).toHaveBeenNthCalledWith(1, expect.any(Function), 2000);
+      expect(setTimeout).toHaveBeenLastCalledWith(expect.any(Function), 4000);
+      expect(result).toBe(false);
+    }, 10000);
   });
 });

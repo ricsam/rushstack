@@ -84,6 +84,10 @@ export { IBuiltInPluginConfiguration as _IBuiltInPluginConfiguration } from './p
 export { IRushPluginConfigurationBase as _IRushPluginConfigurationBase } from './api/RushPluginsConfiguration';
 export { ILogger } from './pluginFramework/logging/Logger';
 
-export { ICloudBuildCacheProvider } from './logic/buildCache/ICloudBuildCacheProvider';
+export {
+  ICloudBuildCacheProvider,
+  IGetCacheEntryResponse,
+  ISetCacheEntryResponse
+} from './logic/buildCache/ICloudBuildCacheProvider';
 
 export { ICredentialCacheOptions, ICredentialCacheEntry, CredentialCache } from './logic/CredentialCache';

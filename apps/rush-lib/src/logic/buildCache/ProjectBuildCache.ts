@@ -12,8 +12,12 @@ import { RushConfigurationProject } from '../../api/RushConfigurationProject';
 import { ProjectChangeAnalyzer } from '../ProjectChangeAnalyzer';
 import { RushProjectConfiguration } from '../../api/RushProjectConfiguration';
 import { RushConstants } from '../RushConstants';
-import { BuildCacheConfiguration } from '../../api/BuildCacheConfiguration';
-import { ICloudBuildCacheProvider } from './ICloudBuildCacheProvider';
+import { BuildCacheConfiguration, IRetryCacheRequest } from '../../api/BuildCacheConfiguration';
+import {
+  IGetCacheEntryResponse,
+  ICloudBuildCacheProvider,
+  ISetCacheEntryResponse
+} from './ICloudBuildCacheProvider';
 import { FileSystemBuildCacheProvider } from './FileSystemBuildCacheProvider';
 import { TarExecutable } from '../../utilities/TarExecutable';
 import { Utilities } from '../../utilities/Utilities';
@@ -48,6 +52,7 @@ export class ProjectBuildCache {
   private readonly _cacheWriteEnabled: boolean;
   private readonly _projectOutputFolderNames: ReadonlyArray<string>;
   private _cacheId: string | undefined;
+  private readonly _retryCacheRequest: IRetryCacheRequest | undefined;
 
   private constructor(cacheId: string | undefined, options: IProjectBuildCacheOptions) {
     const { buildCacheConfiguration, projectConfiguration, projectOutputFolderNames } = options;
@@ -55,6 +60,7 @@ export class ProjectBuildCache {
     this._localBuildCacheProvider = buildCacheConfiguration.localCacheProvider;
     this._cloudBuildCacheProvider = buildCacheConfiguration.cloudCacheProvider;
     this._buildCacheEnabled = buildCacheConfiguration.buildCacheEnabled;
+    this._retryCacheRequest = buildCacheConfiguration.retryCacheRequest;
     this._cacheWriteEnabled = buildCacheConfiguration.cacheWriteEnabled;
     this._projectOutputFolderNames = projectOutputFolderNames || [];
     this._cacheId = cacheId;
@@ -148,10 +154,11 @@ export class ProjectBuildCache {
         'This project was not found in the local build cache. Querying the cloud build cache.'
       );
 
-      cacheEntryBuffer = await this._cloudBuildCacheProvider.tryGetCacheEntryBufferByIdAsync(
-        terminal,
-        cacheId
-      );
+      const _cloudProvider: ICloudBuildCacheProvider = this._cloudBuildCacheProvider;
+      const sendRequest: () => Promise<IGetCacheEntryResponse> = () =>
+        _cloudProvider.tryGetCacheEntryBufferByIdAsync(terminal, cacheId);
+      const response: IGetCacheEntryResponse = await this._sendCacheRequestWithRetries(terminal, sendRequest);
+      cacheEntryBuffer = response.buffer;
       if (cacheEntryBuffer) {
         try {
           localCacheEntryPath = await this._localBuildCacheProvider.trySetCacheEntryBufferAsync(
@@ -319,7 +326,7 @@ export class ProjectBuildCache {
       setLocalCacheEntryPromise = Promise.resolve(localCacheEntryPath);
     }
 
-    let setCloudCacheEntryPromise: Promise<boolean> | undefined;
+    let ISetCacheEntryResponsePromise: (() => Promise<ISetCacheEntryResponse>) | undefined;
 
     // Note that "writeAllowed" settings (whether in config or environment) always apply to
     // the configured CLOUD cache. If the cache is enabled, rush is always allowed to read from and
@@ -333,21 +340,21 @@ export class ProjectBuildCache {
           throw new Error('Expected the local cache entry path to be set.');
         }
       }
-
-      setCloudCacheEntryPromise = this._cloudBuildCacheProvider?.trySetCacheEntryBufferAsync(
-        terminal,
-        cacheId,
-        cacheEntryBuffer
-      );
+      const _cacheEntryBuffer: Buffer = cacheEntryBuffer!;
+      const _provider: ICloudBuildCacheProvider = this._cloudBuildCacheProvider;
+      ISetCacheEntryResponsePromise = () =>
+        _provider.trySetCacheEntryBufferAsync(terminal, cacheId, _cacheEntryBuffer);
     }
 
     let localCachePath: string;
     let updateCloudCacheSuccess: boolean;
-    if (setCloudCacheEntryPromise) {
-      [updateCloudCacheSuccess, localCachePath] = await Promise.all([
-        setCloudCacheEntryPromise,
+    let ISetCacheEntryResponse: ISetCacheEntryResponse;
+    if (ISetCacheEntryResponsePromise) {
+      [ISetCacheEntryResponse, localCachePath] = await Promise.all([
+        this._sendCacheRequestWithRetries(terminal, ISetCacheEntryResponsePromise),
         setLocalCacheEntryPromise
       ]);
+      updateCloudCacheSuccess = ISetCacheEntryResponse.success;
     } else {
       updateCloudCacheSuccess = true;
       localCachePath = await setLocalCacheEntryPromise;
@@ -365,6 +372,53 @@ export class ProjectBuildCache {
     }
 
     return success;
+  }
+
+  private async _sendCacheRequestWithRetries<T extends ISetCacheEntryResponse | IGetCacheEntryResponse>(
+    terminal: ITerminal,
+    sendRequest: () => Promise<T>
+  ): Promise<T> {
+    const response: T = await sendRequest();
+    if (response.hasNetworkError) {
+      if (this._retryCacheRequest) {
+        terminal.writeVerboseLine(
+          'Network request failed. Will retry request as specified in retryCacheRequest'
+        );
+        const { waitDuration, exponential, retries } = this._retryCacheRequest;
+        async function retry(retryAttempt: number): Promise<T> {
+          let delay: number = waitDuration;
+          if (exponential) {
+            delay = Math.pow(waitDuration, retryAttempt);
+          }
+          terminal.writeVerboseLine(`Will retry request in ${delay}s...`);
+          await new Promise<void>((resolve) => {
+            setTimeout(() => {
+              resolve();
+            }, delay * 1000);
+          });
+          const response: T = await sendRequest();
+
+          if (response.hasNetworkError) {
+            if (retryAttempt < retries) {
+              terminal.writeVerboseLine('The retried request failed, will try again');
+              return retry(retryAttempt + 1);
+            } else {
+              terminal.writeVerboseLine(
+                'The retried request failed and has reached the retry limit, the cloud service is not accessible'
+              );
+            }
+          }
+
+          return response;
+        }
+        return retry(1);
+      } else {
+        terminal.writeVerboseLine(
+          'Network request failed and retryCacheRequest is not specified in build-cache.json'
+        );
+      }
+    }
+    return response;
   }
 
   /**

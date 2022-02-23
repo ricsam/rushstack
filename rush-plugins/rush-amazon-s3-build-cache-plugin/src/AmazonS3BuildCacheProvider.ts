@@ -9,7 +9,9 @@ import {
   RushSession,
   RushConstants,
   EnvironmentVariableNames,
-  EnvironmentConfiguration
+  EnvironmentConfiguration,
+  ISetCacheEntryResponse,
+  IGetCacheEntryResponse
 } from '@rushstack/rush-sdk';
 
 import { AmazonS3Client, IAmazonS3Credentials } from './AmazonS3Client';
@@ -152,13 +154,19 @@ export class AmazonS3BuildCacheProvider implements ICloudBuildCacheProvider {
   public async tryGetCacheEntryBufferByIdAsync(
     terminal: ITerminal,
     cacheId: string
-  ): Promise<Buffer | undefined> {
+  ): Promise<IGetCacheEntryResponse> {
     try {
       const client: AmazonS3Client = await this._getS3ClientAsync(terminal);
-      return await client.getObjectAsync(this._s3Prefix ? `${this._s3Prefix}/${cacheId}` : cacheId);
+      return {
+        hasNetworkError: false,
+        buffer: await client.getObjectAsync(this._s3Prefix ? `${this._s3Prefix}/${cacheId}` : cacheId)
+      };
     } catch (e) {
       terminal.writeWarningLine(`Error getting cache entry from S3: ${e}`);
-      return undefined;
+      return {
+        hasNetworkError: false,
+        buffer: undefined
+      };
     }
   }
 
@@ -166,10 +174,13 @@ export class AmazonS3BuildCacheProvider implements ICloudBuildCacheProvider {
     terminal: ITerminal,
     cacheId: string,
     objectBuffer: Buffer
-  ): Promise<boolean> {
+  ): Promise<ISetCacheEntryResponse> {
     if (!this.isCacheWriteAllowed) {
       terminal.writeErrorLine('Writing to S3 cache is not allowed in the current configuration.');
-      return false;
+      return {
+        hasNetworkError: false,
+        success: false
+      };
     }
 
     terminal.writeDebugLine('Uploading object with cacheId: ', cacheId);
@@ -177,10 +188,13 @@ export class AmazonS3BuildCacheProvider implements ICloudBuildCacheProvider {
     try {
       const client: AmazonS3Client = await this._getS3ClientAsync(terminal);
       await client.uploadObjectAsync(this._s3Prefix ? `${this._s3Prefix}/${cacheId}` : cacheId, objectBuffer);
-      return true;
+      return {
+        success: true,
+        hasNetworkError: false
+      };
     } catch (e) {
       terminal.writeWarningLine(`Error uploading cache entry to S3: ${e}`);
-      return false;
+      return { success: false, hasNetworkError: true };
     }
   }
 

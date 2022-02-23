@@ -20,6 +20,17 @@ import { EnvironmentConfiguration } from './EnvironmentConfiguration';
 import { CacheEntryId, GetCacheEntryIdFunction } from '../logic/buildCache/CacheEntryId';
 import type { CloudBuildCacheProviderFactory, RushSession } from '../pluginFramework/RushSession';
 
+export interface IRetryCacheRequest {
+  retries: number;
+  waitDuration: number;
+  exponential: boolean;
+}
+interface IRetryCacheRequestJson {
+  retries: number;
+  waitDuration?: number;
+  exponential?: boolean;
+}
+
 /**
  * Describes the file structure for the "common/config/rush/build-cache.json" config file.
  */
@@ -27,6 +38,7 @@ interface IBaseBuildCacheJson {
   buildCacheEnabled: boolean;
   cacheProvider: string;
   cacheEntryNamePattern?: string;
+  retryCacheRequest?: IRetryCacheRequestJson;
 }
 
 /**
@@ -77,12 +89,17 @@ export class BuildCacheConfiguration {
   public readonly getCacheEntryId: GetCacheEntryIdFunction;
   public readonly localCacheProvider: FileSystemBuildCacheProvider;
   public readonly cloudCacheProvider: ICloudBuildCacheProvider | undefined;
+  public readonly retryCacheRequest: IRetryCacheRequest | undefined;
 
   private constructor(options: IBuildCacheConfigurationOptions) {
     this.buildCacheEnabled =
       EnvironmentConfiguration.buildCacheEnabled ?? options.buildCacheJson.buildCacheEnabled;
     this.cacheWriteEnabled =
       !!this.buildCacheEnabled && EnvironmentConfiguration.buildCacheWriteAllowed !== false;
+
+    const retryCacheRequestConfig: IRetryCacheRequestJson | undefined =
+      options.buildCacheJson.retryCacheRequest;
+    this.retryCacheRequest = BuildCacheConfiguration._parseRetryCacheJson(retryCacheRequestConfig);
 
     this.getCacheEntryId = options.getCacheEntryId;
     this.localCacheProvider = new FileSystemBuildCacheProvider({
@@ -100,6 +117,28 @@ export class BuildCacheConfiguration {
       }
       this.cloudCacheProvider = cloudCacheProviderFactory(buildCacheJson as ICloudBuildCacheJson);
     }
+  }
+
+  private static _parseRetryCacheJson(
+    json: IRetryCacheRequestJson | undefined
+  ): IRetryCacheRequest | undefined {
+    if (!json) {
+      return undefined;
+    }
+    const retries: number = json.retries;
+    let waitDuration: number | undefined = json.waitDuration;
+    let exponential: boolean | undefined = json.exponential;
+
+    if (retries === 0 || waitDuration === 0) {
+      return undefined;
+    }
+    if (waitDuration === undefined) {
+      waitDuration = 2;
+    }
+    if (exponential === undefined) {
+      exponential = false;
+    }
+    return { retries, waitDuration, exponential };
   }
 
   /**

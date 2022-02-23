@@ -9,7 +9,9 @@ import {
   ICredentialCacheEntry,
   EnvironmentVariableNames,
   RushConstants,
-  EnvironmentConfiguration
+  EnvironmentConfiguration,
+  IGetCacheEntryResponse,
+  ISetCacheEntryResponse
 } from '@rushstack/rush-sdk';
 import {
   BlobClient,
@@ -114,15 +116,21 @@ export class AzureStorageBuildCacheProvider implements ICloudBuildCacheProvider 
   public async tryGetCacheEntryBufferByIdAsync(
     terminal: ITerminal,
     cacheId: string
-  ): Promise<Buffer | undefined> {
+  ): Promise<IGetCacheEntryResponse> {
     const blobClient: BlobClient = await this._getBlobClientForCacheIdAsync(cacheId);
 
     try {
       const blobExists: boolean = await blobClient.exists();
       if (blobExists) {
-        return await blobClient.downloadToBuffer();
+        return {
+          hasNetworkError: false,
+          buffer: await blobClient.downloadToBuffer()
+        };
       } else {
-        return undefined;
+        return {
+          hasNetworkError: false,
+          buffer: undefined
+        };
       }
     } catch (err) {
       const e: IBlobError = err as IBlobError;
@@ -166,8 +174,15 @@ export class AzureStorageBuildCacheProvider implements ICloudBuildCacheProvider 
       } else {
         // We don't know what went wrong, hopefully we'll print something useful.
         terminal.writeWarningLine(errorMessage);
+        return {
+          hasNetworkError: true,
+          buffer: undefined
+        };
       }
-      return undefined;
+      return {
+        hasNetworkError: false,
+        buffer: undefined
+      };
     }
   }
 
@@ -175,12 +190,16 @@ export class AzureStorageBuildCacheProvider implements ICloudBuildCacheProvider 
     terminal: ITerminal,
     cacheId: string,
     entryStream: Buffer
-  ): Promise<boolean> {
+  ): Promise<ISetCacheEntryResponse> {
     if (!this.isCacheWriteAllowed) {
       terminal.writeErrorLine(
         'Writing to Azure Blob Storage cache is not allowed in the current configuration.'
       );
-      return false;
+
+      return {
+        hasNetworkError: false,
+        success: false
+      };
     }
 
     const blobClient: BlobClient = await this._getBlobClientForCacheIdAsync(cacheId);
@@ -207,11 +226,17 @@ export class AzureStorageBuildCacheProvider implements ICloudBuildCacheProvider 
 
     if (blobAlreadyExists) {
       terminal.writeVerboseLine('Build cache entry blob already exists.');
-      return true;
+      return {
+        hasNetworkError: false,
+        success: true
+      };
     } else {
       try {
         await blockBlobClient.upload(entryStream, entryStream.length);
-        return true;
+        return {
+          hasNetworkError: false,
+          success: true
+        };
       } catch (e) {
         if ((e as IBlobError).statusCode === 409 /* conflict */) {
           // If something else has written to the blob at the same time,
@@ -221,10 +246,16 @@ export class AzureStorageBuildCacheProvider implements ICloudBuildCacheProvider 
             'Azure Storage returned status 409 (conflict). The cache entry has ' +
               `probably already been set by another builder. Code: "${(e as IBlobError).code}".`
           );
-          return true;
+          return {
+            hasNetworkError: false,
+            success: true
+          };
         } else {
           terminal.writeWarningLine(`Error uploading cache entry to Azure Storage: ${e}`);
-          return false;
+          return {
+            hasNetworkError: true,
+            success: false
+          };
         }
       }
     }
