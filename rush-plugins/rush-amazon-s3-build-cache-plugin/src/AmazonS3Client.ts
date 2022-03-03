@@ -128,11 +128,11 @@ export class AmazonS3Client {
 
   private _writeDebugLine(...messageParts: (string | IColorableSequence)[]): void {
     // if the terminal has been closed then don't bother sending a debug message
-    try {
-      this._terminal.writeDebugLine(...messageParts);
-    } catch (err) {
-      //
-    }
+    // try {
+    this._terminal.writeDebugLine(...messageParts);
+    // } catch (err) {
+    //
+    // }
   }
 
   private async _makeRequestAsync(
